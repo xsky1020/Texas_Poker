@@ -1,0 +1,15 @@
+{
+  "name": "river-lan-holdem",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "河畔牌局：可自定义规则的局域网德州扑克",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "node tests/browser.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": { "ws": "^8.18.3" },
+  "devDependencies": { "playwright": "^1.56.0" }
+}

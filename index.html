@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#193c35">
+  <title>RIVER · 河畔牌局</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <nav class="rail" aria-label="主导航">
+      <a class="brand-symbol" href="/" aria-label="河畔牌局首页">r<span>♠</span></a>
+      <button class="rail-link selected" id="table-nav" title="牌桌"><span>♧</span><small>牌桌</small></button>
+      <button class="rail-link" id="rules-btn" title="游戏规则"><span>☷</span><small>规则</small></button>
+      <div class="rail-bottom"><button class="rail-link" id="fullscreen-btn" title="全屏 · F"><span>⛶</span><small>全屏</small></button><span class="rail-note">LOCAL<br>TABLE</span></div>
+    </nav>
+    <div class="workspace">
+      <header class="topbar">
+        <a class="wordmark" href="/">RIVER<span>河畔牌局</span></a>
+        <div class="header-meta"><span class="local-label">私人牌桌 · 局域网联机</span><span id="connection-status" class="connection"><i></i>正在连接</span><time id="clock">--:--</time></div>
+      </header>
+      <main class="main-layout">
+        <section class="play-column">
+          <div class="page-heading"><div><p class="eyebrow" id="table-eyebrow">TEXAS HOLD’EM</p><h1 id="room-title">好牌，和朋友一起。</h1><p class="heading-caption" id="room-caption">围坐一桌，让下一手值得期待。</p></div><button id="settings-btn" class="icon-btn" title="牌桌设置" aria-label="牌桌设置">⚙</button></div>
+          <div class="table-stage" id="table-stage">
+            <canvas id="game-canvas" aria-label="绿色椭圆牌桌"></canvas>
+            <div class="felt-wordmark" aria-hidden="true">RIVER<span>TEXAS HOLD’EM · PRIVATE TABLE</span></div>
+            <div id="seats" class="seats"></div>
+            <div class="table-center" id="table-center">
+              <div id="lobby-center" class="lobby-center"><span class="welcome-suit">♠</span><h2>给朋友留个位置</h2><p>创建一张牌桌，分享房间号，即刻开局。</p><div class="lobby-buttons"><button id="create-btn" class="btn btn-gold">＋ 创建房间</button><button id="join-btn" class="btn btn-felt">加入房间 <span>↗</span></button></div><button id="quick-btn" class="text-btn light">先和机器人玩一局 <span>→</span></button></div>
+              <div id="hand-center" class="hand-center" hidden><div class="pot-label">底池 <strong id="pot-value">0</strong></div><div id="board" class="board" aria-label="公共牌"></div><p class="street-label" id="street-label"></p><div id="settlement" class="settlement" hidden></div></div>
+            </div>
+            <div class="table-footnote" id="table-footnote">2–9 人牌桌 <span>·</span> 真实玩家，同一局域网</div>
+          </div>
+          <div class="action-panel" id="action-panel">
+            <div class="idle-actions" id="idle-actions"><div class="idle-message"><span class="small-suit">♠</span><div><strong id="idle-title">你的下一局，在这里开始</strong><span id="idle-caption">自定义盲注、筹码与节奏，按自己的规则来。</span></div></div><button class="btn btn-dark" id="bottom-create-btn">创建牌桌 <span>→</span></button></div>
+            <div class="game-actions" id="game-actions" hidden><div class="turn-line"><span id="turn-caption">等待行动</span><span id="turn-timer"></span></div><div class="timer-track"><div id="timer-progress"></div></div><div class="action-controls"><div class="base-actions"><button class="btn btn-muted" id="fold-btn">弃牌</button><button class="btn btn-dark" id="call-btn">过牌</button></div><div class="raise-controls"><div class="raise-input"><label for="raise-amount">加注至</label><input type="number" id="raise-amount" min="1" step="1" inputmode="numeric" aria-label="本轮加注总额"><button class="btn btn-gold" id="raise-btn">加注</button></div><input type="range" id="raise-slider" min="0" max="100" value="0" aria-label="加注筹码"><div class="raise-presets"><button data-bet="min">最小加注</button><button data-bet="bb">2×大盲</button><button data-bet="half">½ 底池</button><button data-bet="pot">底池</button><button id="allin-btn">全下</button></div></div></div></div>
+          </div>
+          <footer class="page-footer"><span>♣ &nbsp; 聚在一起，享受每一手。</span><span>仅供娱乐 · 虚拟筹码</span></footer>
+        </section>
+        <aside class="room-sidebar">
+          <section class="sidebar-card room-card"><div class="section-top"><h2>牌桌信息</h2><span class="tiny-label" id="room-phase">未入座</span></div><div id="empty-room-info"><p class="sidebar-intro">一张牌桌，一群老朋友。<br>你的规则，你的节奏。</p><div class="feature-row"><span>◎</span><div><strong>同网即连</strong><p>电脑、手机均可加入</p></div></div><div class="feature-row"><span>≡</span><div><strong>自由设置</strong><p>盲注、买入、行动时间</p></div></div><div class="feature-row"><span>♧</span><div><strong>随时开局</strong><p>也可以邀请机器人练习</p></div></div></div><div id="room-details" hidden><div class="room-code-block"><span>房间号</span><button id="copy-code-btn" title="复制房间号"><strong id="room-code">—</strong><span>⧉</span></button></div><dl class="room-facts" id="room-facts"></dl><button class="btn btn-outline full-width" id="share-btn">⧉ &nbsp; 复制邀请链接</button><p class="lan-note" id="lan-note"></p><div class="host-controls" id="host-controls" hidden><button class="btn btn-dark full-width" id="start-btn">开始牌局</button><button class="btn btn-outline full-width" id="add-bot-btn">＋ 邀请机器人</button></div><div class="room-utilities"><button class="text-btn" id="buyin-btn">补充筹码</button><button class="text-btn muted" id="leave-btn">离开牌桌</button></div></div></section>
+          <section class="sidebar-card activity-card"><div class="section-top"><h2>牌局动态</h2><span class="activity-dot"></span></div><div id="status-log" class="status-log" aria-live="polite"><div class="empty-log"><span>◷</span><p>入座之后，故事开始。</p></div></div></section>
+          <div class="sidebar-bottom"><span>RIVER</span><p>A good hand. A better company.</p></div>
+        </aside>
+      </main>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="room-dialog" class="modal"><form id="room-form"><div class="modal-top"><div><p class="eyebrow">MAKE IT YOUR TABLE</p><h2 id="modal-title">创建你的牌桌</h2></div><button type="button" class="close-btn" data-close="room-dialog" aria-label="关闭">×</button></div><p class="modal-description" id="modal-description">设定今晚的节奏，邀请朋友入座。</p><div class="identity-fields"><label>你的昵称<input name="name" id="player-name" type="text" maxlength="18" value="玩家" required autocomplete="nickname"></label><label id="room-name-field">牌桌名称<input name="roomName" id="room-name" maxlength="40" value="朋友的牌局" required></label></div><div id="join-code-field" hidden><label>房间号<input id="join-code" type="text" maxlength="12" placeholder="输入 6 位房间号" autocomplete="off" style="text-transform:uppercase"></label></div><div id="configuration"><div class="preset-tabs" role="group" aria-label="设置预设"><button type="button" data-preset="casual" class="active">朋友小聚<span>50 / 100</span></button><button type="button" data-preset="fast">轻松快局<span>10 / 20</span></button><button type="button" data-preset="deep">深筹码局<span>100 / 200</span></button></div><div class="settings-grid"><fieldset><legend>01 &nbsp; 盲注与筹码</legend><div class="form-grid"><label>小盲<input name="smallBlind" type="number" min="1" max="100000000" step="1" required value="50"></label><label>大盲<input name="bigBlind" type="number" min="1" max="100000000" step="1" required value="100"></label><label>前注<input name="ante" type="number" min="0" max="100000000" step="1" required value="0"></label><label>初始筹码<input name="initialChips" type="number" min="1" max="1000000000" step="1" required value="10000"></label><label>最低买入<input name="minBuyIn" type="number" min="1" max="1000000000" step="1" required value="2000"></label><label>最高买入<input name="maxBuyIn" type="number" min="1" max="1000000000" step="1" required value="20000"></label></div></fieldset><fieldset><legend>02 &nbsp; 人数与节奏</legend><div class="form-grid"><label>最多玩家<select name="maxPlayers"><option value="2">2 人</option><option value="3">3 人</option><option value="4">4 人</option><option value="5">5 人</option><option value="6" selected>6 人</option><option value="7">7 人</option><option value="8">8 人</option><option value="9">9 人</option></select></label><label>行动时间 · 秒<input name="turnSeconds" type="number" min="1" max="300" step="1" required value="30"></label><label>每局间隔 · 秒<input name="handDelaySeconds" type="number" min="0" max="300" step="1" required value="5"></label><label>牌局时长 · 分钟<input name="sessionMinutes" type="number" min="0" max="1440" step="1" required value="0"><small>0 为不限时</small></label><label>升盲间隔 · 分钟<input name="blindIntervalMinutes" type="number" min="0" max="1440" step="1" required value="0"><small>0 为固定盲注</small></label><label>升盲倍数<input name="blindMultiplier" type="number" min="2" max="10" step="1" required value="2"></label></div></fieldset></div><label class="switch-field"><span><strong>自动开始下一手</strong><small>结算结束后，按设定间隔继续发牌</small></span><input name="autoDeal" type="checkbox"><span class="switch"></span></label></div><p class="form-error" id="form-error" role="alert"></p><div class="modal-footer"><span id="modal-footnote">虚拟筹码 · 仅供娱乐</span><button class="btn btn-dark" type="submit" id="submit-room-btn">创建房间 <span>→</span></button></div></form></dialog>
+  <dialog id="buyin-dialog" class="modal small-modal"><form id="buyin-form"><div class="modal-top"><div><p class="eyebrow">BACK TO THE TABLE</p><h2>补充筹码</h2></div><button type="button" class="close-btn" data-close="buyin-dialog" aria-label="关闭">×</button></div><p class="modal-description" id="buyin-description">筹码将在下一手参与对局。</p><label>买入筹码<input type="number" id="buyin-amount" step="1" required></label><p class="form-error" id="buyin-error" role="alert"></p><div class="modal-footer"><span>虚拟筹码</span><button class="btn btn-dark" type="submit">确认买入</button></div></form></dialog>
+  <dialog id="rules-dialog" class="modal small-modal"><div class="modal-top"><div><p class="eyebrow">A SEAT AT THE TABLE</p><h2>怎么玩</h2></div><button class="close-btn" data-close="rules-dialog" aria-label="关闭">×</button></div><div class="rules-copy"><p>每人两张底牌，与五张公共牌组合成最好的五张牌。可通过下注让其他玩家弃牌，或在摊牌时赢得底池。</p><ol><li><strong>翻牌前</strong>：发两张底牌，大小盲下注。</li><li><strong>翻牌</strong>：发三张公共牌。</li><li><strong>转牌、河牌</strong>：各发一张公共牌并进行下注。</li><li><strong>摊牌</strong>：比较牌型；平局和边池自动结算。</li></ol><p class="hand-ranking">同花顺 › 四条 › 葫芦 › 同花 › 顺子 › 三条 › 两对 › 一对 › 高牌</p><p>行动倒计时结束后，可过牌时自动过牌，否则自动弃牌。房主可在两手之间调整规则。</p><p>联机：一台电脑运行服务器，同一局域网的朋友打开邀请链接，输入昵称和房间号即可。</p></div></dialog>
+  <script src="game.js" defer></script>
+</body>
+</html>
