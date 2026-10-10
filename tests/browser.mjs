@@ -127,6 +127,8 @@ try {
   await waitFor(host, s => s.players.length === 2, 'leave room');
   const practice = await open('练习');
   await practice.click('#quick-btn');
+  await practice.selectOption('#practice-opponents', '2');
+  await practice.click('#practice-start-btn');
   const practiceState = await waitFor(practice, s => s.phase === 'preflop' && s.players?.filter(p => p.bot).length === 2, 'practice room with two bots');
   if (practiceState.legalActions.canAllIn) {
     await practice.click('#allin-btn');

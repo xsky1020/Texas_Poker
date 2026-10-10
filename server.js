@@ -7,6 +7,8 @@ import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { PokerRoom, validateConfig } from './poker-engine.js';
+import { analyzeDecision, chooseBotAction, gradeDecision } from './poker-ai.js';
+import { solverStatus, solveDecision } from './solver-adapter.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const activePhases = new Set(['preflop', 'flop', 'turn', 'river']);
@@ -33,7 +35,7 @@ export function lanAddresses(port) {
   return [...new Set(addresses)];
 }
 
-export async function startServer({ port = Number(process.env.PORT || 3000), host = '0.0.0.0', tickMs = 200 } = {}) {
+export async function startServer({ port = Number(process.env.PORT || 3000), host = '0.0.0.0', tickMs = 200, solveProvider = solveDecision } = {}) {
   const rooms = new Map();
   const clients = new Set();
   let boundPort = port;
@@ -48,7 +50,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
       if (pathname === '/api/info') {
         return json(response, 200, {
           port: boundPort, addresses: lanAddresses(boundPort),
-          rooms: [...rooms.values()].map(({ room }) => ({
+          rooms: [...rooms.values()].filter(entry => !entry.practice).map(({ room }) => ({
             code: room.code, name: room.config.roomName, players: room.players.filter(p => !p.bot).length,
             maxPlayers: room.config.maxPlayers, phase: room.phase,
           })),
@@ -80,9 +82,65 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
     wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request));
   });
   const send = (ws, value) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
+  const decisionKey = (room, playerId) => JSON.stringify([room.handNumber, room.phase, room.actorId, playerId,
+    room.currentBet, room.board, room.players.map(p => [p.id, p.chips, p.bet, p.totalBet, p.folded, p.allIn])]);
+  const practiceClock = entry => {
+    if (!entry.practice) return;
+    const actor = entry.room.players.find(p => p.id === entry.room.actorId);
+    const solvingThisTurn = actor && entry.solvePending && entry.solveClock?.key === decisionKey(entry.room, actor.id);
+    if (entry.practice.paused || solvingThisTurn || (entry.practice.untimed && actor && !actor.bot)) entry.room.deadline = null;
+  };
+  const publicSnapshot = (entry, playerId) => {
+    practiceClock(entry);
+    const state = entry.room.snapshot(playerId);
+    if (entry.practice) {
+      state.practice = { ...entry.practice, solving: Boolean(entry.solvePending &&
+        entry.solveClock?.key === decisionKey(entry.room, playerId)), solver: solverStatus() };
+      state.training = structuredClone(entry.training);
+    }
+    return state;
+  };
+  const completePracticeHand = entry => {
+    if (entry.practice && entry.room.phase === 'showdown' && entry.completedHand !== entry.room.handNumber) {
+      entry.completedHand = entry.room.handNumber;
+      entry.training.hands++;
+    }
+  };
+  const coachFor = (entry, playerId) => {
+    if (!entry.practice) throw new Error('教学提示仅用于个人练习');
+    if (!entry.room.legalActions(playerId).canAct) throw new Error('轮到你行动时才能分析当前决策');
+    const key = decisionKey(entry.room, playerId);
+    if (entry.coachCache?.key === key) return entry.coachCache.analysis;
+    const analysis = analyzeDecision(entry.room.snapshot(playerId), { heroId: playerId, iterations: 1000, seed: key, style: entry.practice.style });
+    entry.coachCache = { key, analysis };
+    return analysis;
+  };
+  const refillPracticeBots = entry => {
+    if (!entry.practice || activePhases.has(entry.room.phase)) return;
+    for (const player of entry.room.players) if (player.bot && player.chips === 0) {
+      entry.room.buyIn(player.id, entry.room.config.initialChips);
+    }
+  };
+  const solverFeedback = (solver, action, legal) => {
+    const equivalent = item => {
+      const type = action.type === 'call' && legal.canCheck ? 'check' : action.type;
+      if (type === 'allin' && item.type === 'raise') return Math.abs(item.amount - legal.maxRaise) <= 1;
+      if (type === 'raise' && action.amount === legal.maxRaise && legal.canAllIn && item.type === 'allin') return true;
+      if (item.type !== type) return false;
+      return type !== 'raise' || Math.abs(item.amount - action.amount) <= Math.max(1, item.amount * 0.05);
+    };
+    const frequency = solver.strategy.filter(equivalent).reduce((sum, item) => sum + item.frequency, 0);
+    return { grade: frequency >= 0.02 ? 'good' : 'discuss',
+      label: frequency >= 0.02 ? '符合 Solver 参考' : '这个选择值得复盘',
+      message: frequency >= 0.02
+        ? `这个选择属于当前范围与下注树下的混合策略，参考频率约 ${Math.round(frequency * 100)}%。`
+        : '这个选择未包含在本次求解的主要策略中；范围与下注尺寸受到模型限制，不能据此计算你的实际 EV 损失。',
+      score: frequency >= 0.02 ? 1 : null };
+  };
   const broadcast = entry => {
+    completePracticeHand(entry);
     for (const ws of clients) {
-      if (ws.context?.code === entry.room.code) send(ws, { type: 'state', state: entry.room.snapshot(ws.context.playerId) });
+      if (ws.context?.code === entry.room.code) send(ws, { type: 'state', state: publicSnapshot(entry, ws.context.playerId) });
     }
   };
   const newCode = () => {
@@ -146,7 +204,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
     ws.alive = true;
     ws.on('pong', () => { ws.alive = true; });
     ws.rate = { start: Date.now(), count: 0 };
-    ws.on('message', raw => {
+    ws.on('message', async raw => {
       let message;
       try {
         const now = Date.now();
@@ -156,16 +214,34 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
         if (!message || typeof message !== 'object' || typeof message.type !== 'string') throw new Error('无效请求');
         let entry;
         let result = {};
-        if (message.type === 'create') {
+        if (message.type === 'create' || message.type === 'practice') {
           if (ws.context) throw new Error('请先离开当前房间');
           if (rooms.size >= 100) throw new Error('房间数量已达上限');
-          const config = validateConfig(message.config || {});
+          const practice = message.type === 'practice';
+          const opponents = Number(message.opponents ?? 1);
+          const style = message.style || 'balanced';
+          if (practice && (!Number.isInteger(opponents) || opponents < 1 || opponents > 5)) throw new Error('练习对手数量需为 1–5');
+          if (practice && !['balanced', 'tight', 'aggressive'].includes(style)) throw new Error('请选择有效的对手风格');
+          const config = validateConfig(practice ? {
+            smallBlind: 10, bigBlind: 20, initialChips: 2000, minBuyIn: 400, maxBuyIn: 20000,
+            turnSeconds: 300, autoDeal: false, ...(message.config || {}),
+            roomName: '个人练习桌', maxPlayers: opponents + 1,
+          } : message.config || {});
           const room = new PokerRoom(newCode(), config);
           const playerId = randomBytes(12).toString('hex');
           const token = randomBytes(24).toString('hex');
           room.addPlayer(playerId, nameOf(message.name));
           room.hostId = playerId;
           entry = { room, tokens: new Map([[playerId, token]]), touchedAt: now, botTurn: null, showdownAt: null };
+          if (practice) {
+            entry.practice = { enabled: true, style, paused: false, untimed: message.untimed !== false,
+              coachMode: message.coachMode === 'manual' ? 'manual' : 'auto' };
+            entry.training = { hands: 0, decisions: 0, goodDecisions: 0, history: [], lastFeedback: null };
+            const names = ['青竹', '晚风', '山岚', '小满', '星河'];
+            for (let i = 0; i < opponents; i++) room.addPlayer(`bot-${randomBytes(8).toString('hex')}`, names[i], { bot: true });
+            room.startHand(now);
+            practiceClock(entry);
+          }
           rooms.set(room.code, entry);
           bind(ws, entry, playerId);
           result = { code: room.code, playerId, token };
@@ -173,6 +249,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
           if (ws.context) throw new Error('请先离开当前房间');
           entry = rooms.get(String(message.code || '').trim());
           if (!entry) throw new Error('房间不存在，请检查房间码');
+          if (entry.practice) throw new Error('这是个人练习桌，请创建自己的练习');
           const playerId = randomBytes(12).toString('hex');
           const token = randomBytes(24).toString('hex');
           entry.room.addPlayer(playerId, nameOf(message.name));
@@ -194,8 +271,80 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
         } else {
           entry = auth(ws);
           switch (message.type) {
-            case 'action': entry.room.act(ws.context.playerId, message.action || {}, now); break;
-            case 'start': requireHost(entry, ws); entry.room.startHand(now); break;
+            case 'action': {
+              if (entry.practice?.paused) throw new Error('请先继续练习');
+              const analysis = entry.practice ? coachFor(entry, ws.context.playerId) : null;
+              const solver = entry.solverCache?.key === decisionKey(entry.room, ws.context.playerId) ? entry.solverCache.result : null;
+              const legal = entry.room.legalActions(ws.context.playerId);
+              const handNumber = entry.room.handNumber, phase = entry.room.phase;
+              entry.room.act(ws.context.playerId, message.action || {}, now);
+              if (analysis) {
+                const feedback = { ...(solver ? solverFeedback(solver, message.action, legal) : gradeDecision(analysis, message.action)), handNumber, phase,
+                  action: structuredClone(message.action), recommendation: solver?.recommendation || analysis.recommendation,
+                  reasons: solver ? solver.assumptions : analysis.reasons,
+                  source: solver?.source || analysis.source, at: now };
+                entry.training.decisions++;
+                if (feedback.grade === 'good' || feedback.grade === 'correct') entry.training.goodDecisions++;
+                entry.training.lastFeedback = feedback;
+                entry.training.history.unshift(feedback);
+                entry.training.history = entry.training.history.slice(0, 50);
+              }
+              break;
+            }
+            case 'start': {
+              requireHost(entry, ws);
+              if (entry.practice?.paused) throw new Error('请先继续练习');
+              refillPracticeBots(entry);
+              entry.room.startHand(now);
+              break;
+            }
+            case 'pause': {
+              requireHost(entry, ws);
+              if (!entry.practice) throw new Error('暂停仅用于个人练习');
+              if (typeof message.paused !== 'boolean') throw new Error('暂停状态无效');
+              const wasPaused = entry.practice.paused;
+              if (message.paused && !entry.practice.paused) entry.pausedClock = {
+                actorId: entry.room.actorId,
+                remainingMs: entry.room.deadline === null ? entry.solveClock?.remainingMs ?? entry.room.config.turnSeconds * 1000
+                  : Math.max(0, entry.room.deadline - now),
+              };
+              entry.practice.paused = message.paused;
+              entry.botTurn = null;
+              if (!message.paused && wasPaused && entry.room.actorId) entry.room.deadline = now +
+                (entry.pausedClock?.actorId === entry.room.actorId ? entry.pausedClock.remainingMs : entry.room.config.turnSeconds * 1000);
+              practiceClock(entry);
+              break;
+            }
+            case 'coach': result = { analysis: coachFor(entry, ws.context.playerId), solver: solverStatus() }; break;
+            case 'solve': {
+              const analysis = coachFor(entry, ws.context.playerId);
+              if (entry.solvePending) throw new Error('当前桌正在求解，请等待结果');
+              const key = decisionKey(entry.room, ws.context.playerId);
+              const originalContext = ws.context;
+              entry.solveClock = { key, actorId: entry.room.actorId,
+                remainingMs: entry.room.deadline === null ? entry.pausedClock?.remainingMs ?? entry.room.config.turnSeconds * 1000
+                  : Math.max(0, entry.room.deadline - now) };
+              entry.solvePending = true;
+              practiceClock(entry);
+              broadcast(entry);
+              try {
+                const solver = await solveProvider(entry.room.snapshot(ws.context.playerId), { timeoutMs: 60000 });
+                if (ws.context !== originalContext || key !== decisionKey(entry.room, originalContext.playerId)) {
+                  throw new Error('局面已变化，请在下次行动时重新求解');
+                }
+                if (solver.supported && solver.strategy?.length) entry.solverCache = { key, result: solver };
+                result = { analysis, solver };
+              } finally {
+                entry.solvePending = false;
+                if (key === decisionKey(entry.room, originalContext.playerId) && !entry.practice.untimed && !entry.practice.paused) {
+                  entry.room.deadline = Date.now() + entry.solveClock.remainingMs;
+                }
+                entry.solveClock = null;
+                practiceClock(entry);
+                broadcast(entry);
+              }
+              break;
+            }
             case 'settings': requireHost(entry, ws); entry.room.updateConfig(message.config || {}); break;
             case 'addBot': {
               requireHost(entry, ws);
@@ -229,23 +378,16 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
     ws.on('error', () => {});
   });
 
-  const botAction = (room, actor) => {
-    const legal = room.legalActions(actor.id);
-    const strength = actor.cards?.length === 2 ? Math.max(...actor.cards.map(c => c.value)) : 10;
-    const roll = Math.random();
-    if (legal.canRaise && strength >= 11 && roll < 0.16) {
-      const target = Math.min(legal.maxRaise, Math.max(legal.minRaise, room.currentBet + room.config.bigBlind * 2));
-      return { type: 'raise', amount: target };
-    }
-    if (legal.canCheck) return { type: 'check' };
-    if (legal.toCall > actor.chips * 0.5 && strength < 11 && roll < 0.5) return { type: 'fold' };
-    return { type: 'call' };
-  };
   const timer = setInterval(() => {
     const now = Date.now();
     for (const [code, entry] of rooms) {
       const { room } = entry;
       try {
+        if (!room.players.some(p => !p.bot && p.connected) && now - entry.touchedAt > 2 * 3600000) {
+          rooms.delete(code);
+          continue;
+        }
+        if (entry.practice?.paused) continue;
         let changed = false;
         const before = JSON.stringify([room.phase, room.actorId, room.handNumber, room.deadline]);
         const actor = room.players.find(p => p.id === room.actorId);
@@ -255,12 +397,14 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
             const key = `${room.handNumber}:${room.phase}:${actor.id}:${room.currentBet}:${actor.bet}`;
             if (entry.botTurn?.key !== key) entry.botTurn = { key, at: now + 850 };
             if (now >= entry.botTurn.at) {
-              room.act(actor.id, botAction(room, actor), now);
+              const action = chooseBotAction(room.snapshot(actor.id), { heroId: actor.id, style: entry.practice?.style || 'balanced', iterations: 400 });
+              room.act(actor.id, action, now);
               entry.botTurn = null;
               changed = true;
             }
           } else entry.botTurn = null;
         }
+        practiceClock(entry);
         room.tick(now);
         changed ||= before !== JSON.stringify([room.phase, room.actorId, room.handNumber, room.deadline]);
         if (!activePhases.has(room.phase)) {
@@ -271,6 +415,8 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
         if (room.phase === 'showdown') {
           entry.showdownAt ??= now;
           if (room.config.autoDeal && now - entry.showdownAt >= room.config.handDelaySeconds * 1000 && room.players.some(p => !p.bot && p.connected)) {
+            completePracticeHand(entry);
+            refillPracticeBots(entry);
             const eligible = room.players.filter(p => p.chips > 0 && p.connected);
             if (eligible.length >= 2 && (!room.config.sessionMinutes || now < room.startedAt + room.config.sessionMinutes * 60000)) {
               room.startHand(now); changed = true;

@@ -14,7 +14,10 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist "node_modules\ws\package.json" (
+set "RIVER_NEEDS_DEPS="
+if not exist "node_modules\ws\package.json" set "RIVER_NEEDS_DEPS=1"
+if not exist "node_modules\phe\package.json" set "RIVER_NEEDS_DEPS=1"
+if defined RIVER_NEEDS_DEPS (
   echo Installing dependencies...
   call npm install
   if errorlevel 1 (
